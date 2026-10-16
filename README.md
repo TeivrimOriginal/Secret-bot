@@ -32,8 +32,13 @@ python crypt_bot.py
 
 ```bash
 python pw-demo-server.py     # http://localhost:8099/d/demo-token-1
-python test-passkey.py       # 48 проверок, exit=0
+python test-passkey.py       # 53 проверки, exit=0
 ```
+
+`test-passkey.py` гоняет HTTP через `fastapi.testclient`, то есть ему нужен
+`httpx`. Starlette 1.7 при этом печатает `StarletteDeprecationWarning`
+(«install `httpx2` instead») — это только предупреждение, тесты зелёные;
+лечится `pip install httpx2`.
 
 ## Настройки (переменные окружения)
 
