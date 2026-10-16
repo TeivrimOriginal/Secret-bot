@@ -31,6 +31,10 @@ for package in (
     binaries += pkg_binaries
     hiddenimports += pkg_hidden
 
+# Иконки PWA лежат в static/ рядом с web_app.py — без них ярлык на главном
+# экране Android будет без картинки.
+datas.append((os.path.join(PROJECT, "static"), "static"))
+
 # uvicorn подтягивает реализации динамически — их не видно статически
 hiddenimports += [
     "uvicorn.logging",

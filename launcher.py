@@ -21,7 +21,7 @@
 import os
 import sys
 
-VERSION = "1.1.0"
+VERSION = "1.2.0"
 APP_NAME = "Secret-bot"
 DATA_DIR_NAME = "SecretBot"
 ENV_FILE_NAME = "secret-bot.env"
@@ -201,7 +201,9 @@ def run_selftest() -> int:
         server, task = await cb.start_site(DummyBot(), "127.0.0.1", port)
         try:
             results = {}
-            for path in ("/healthz", "/d/selftest-token", "/d/no-such-token"):
+            for path in ("/healthz", "/d/selftest-token", "/d/no-such-token",
+                         "/manifest.webmanifest", "/sw.js",
+                         "/icon-192.png", "/icon-512.png"):
                 results[path] = await asyncio.to_thread(http_get, path)
             return results
         finally:
@@ -226,6 +228,24 @@ def run_selftest() -> int:
             print("  ✅ неизвестная ссылка -> 404")
         else:
             problems.append(f"сайт: /d/no-such-token -> {miss_code} (ждали 404)")
+
+        # PWA: манифест, service worker и иконки для ярлыка на экране Android
+        mf_code, mf_body = pages["/manifest.webmanifest"]
+        if mf_code == 200 and '"name"' in mf_body and '"icons"' in mf_body:
+            print("  ✅ PWA: манифест отдаётся")
+        else:
+            problems.append(f"PWA: манифест -> {mf_code}")
+        sw_code, sw_body = pages["/sw.js"]
+        if sw_code == 200 and "caches" in sw_body and "serviceWorker" not in sw_body:
+            print("  ✅ PWA: service worker отдаётся")
+        else:
+            problems.append(f"PWA: sw.js -> {sw_code}")
+        for size in (192, 512):
+            ic_code, _ = pages[f"/icon-{size}.png"]
+            if ic_code == 200:
+                print(f"  ✅ PWA: иконка {size} отдаётся")
+            else:
+                problems.append(f"PWA: иконка {size} -> {ic_code}")
     except Exception as exc:  # noqa: BLE001
         problems.append(f"сайт: {exc!r}")
 

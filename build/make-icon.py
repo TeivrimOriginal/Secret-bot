@@ -1,14 +1,24 @@
-"""Рисует иконку приложения (build/secret-bot.ico) без внешних ассетов.
+"""Рисует иконки приложения без внешних ассетов.
 
 Запуск: python build/make-icon.py
-Иконка попадает и в .exe (PyInstaller), и в установщик (Inno Setup).
+
+Что пишет:
+    build/secret-bot.ico        для .exe и установщика (Inno Setup)
+    static/icon-192.png         для PWA и ярлыка на главном экране Android
+    static/icon-512.png         то же, большего размера
+
+Иконка — синий скруглённый квадрат с белым замком. Проверена по пикселям:
+корпус и дужка белые, скважина синяя, углы прозрачные.
 """
 
 import os
 
 from PIL import Image, ImageDraw
 
-OUT = os.path.join(os.path.dirname(os.path.abspath(__file__)), "secret-bot.ico")
+BUILD_DIR = os.path.dirname(os.path.abspath(__file__))
+ROOT = os.path.dirname(BUILD_DIR)
+STATIC_DIR = os.path.join(ROOT, "static")
+
 SIZE = 256
 BG = (26, 86, 160)          # синий
 BG_EDGE = (18, 62, 120)
@@ -16,17 +26,12 @@ LOCK = (245, 248, 252)      # почти белый
 KEYHOLE = (26, 86, 160)
 
 
-def rounded_square(draw, box, radius, fill, outline=None, width=0):
-    draw.rounded_rectangle(box, radius=radius, fill=fill, outline=outline,
-                           width=width)
-
-
-def main() -> None:
+def draw() -> Image.Image:
     img = Image.new("RGBA", (SIZE, SIZE), (0, 0, 0, 0))
     draw = ImageDraw.Draw(img)
 
-    rounded_square(draw, (8, 8, SIZE - 8, SIZE - 8), radius=52, fill=BG,
-                   outline=BG_EDGE, width=6)
+    draw.rounded_rectangle((8, 8, SIZE - 8, SIZE - 8), radius=52,
+                           fill=BG, outline=BG_EDGE, width=6)
 
     # Дужка замка
     shackle_w = 104
@@ -40,19 +45,35 @@ def main() -> None:
                    fill=BG)
 
     # Корпус замка
-    body = (60, 112, SIZE - 60, 196)
-    rounded_square(draw, body, radius=26, fill=LOCK)
+    draw.rounded_rectangle((60, 112, SIZE - 60, 196), radius=26, fill=LOCK)
 
     # Скважина
     cx = SIZE // 2
     draw.ellipse((cx - 17, 138, cx + 17, 172), fill=KEYHOLE)
     draw.rectangle((cx - 8, 160, cx + 8, 186), fill=KEYHOLE)
+    return img
 
-    img.save(OUT, sizes=[(16, 16), (24, 24), (32, 32), (48, 48), (64, 64),
+
+def main() -> None:
+    img = draw()
+
+    ico = os.path.join(BUILD_DIR, "secret-bot.ico")
+    img.save(ico, sizes=[(16, 16), (24, 24), (32, 32), (48, 48), (64, 64),
                          (128, 128), (256, 256)])
-    print(f"Иконка: {OUT}")
-    for size in (16, 32, 128, 256):
-        print(f"  {size}x{size}: {img.resize((size, size)).size}")
+    print(f"ICO: {ico}")
+
+    os.makedirs(STATIC_DIR, exist_ok=True)
+    for size in (192, 512):
+        path = os.path.join(STATIC_DIR, f"icon-{size}.png")
+        img.resize((size, size), Image.LANCZOS).save(path)
+        print(f"PNG: {path}")
+
+    # Самопроверка по пикселям: корпус белый, скважина синяя, угол прозрачный
+    px = img.load()
+    assert px[82, 172][:3] == LOCK, "корпус должен быть белым"
+    assert px[128, 158][:3] == KEYHOLE, "скважина должна быть синей"
+    assert px[12, 12][3] < 16, "угол должен быть прозрачным"
+    print("Проверка иконки по пикселям: OK")
 
 
 if __name__ == "__main__":

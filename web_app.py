@@ -14,6 +14,9 @@ uvicorn запускается как asyncio-задача, сигналами �
     POST /d/{token}/pw/login/options       challenge для входа по passkey
     POST /d/{token}/pw/login/verify        проверка подписи, выдача сессии
     GET  /healthz                          проверка, что сайт жив
+    GET  /manifest.webmanifest             PWA-манифест (Android)
+    GET  /sw.js                            service worker (офлайн)
+    GET  /icon-192.png, /icon-512.png      иконки PWA
 
 Криптография, база, разбор WebAuthn и хендлеры бота остались
 в crypt_bot.py — этот модуль только адаптирует их к HTTP.
@@ -25,6 +28,7 @@ import html
 import io
 import json
 import logging
+import os
 import re
 import time
 from urllib.parse import quote
@@ -46,7 +50,15 @@ PAGE = """<!doctype html>
 <html lang="ru"><head><meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <meta name="robots" content="noindex">
+<meta name="theme-color" content="#1a56a0">
 <title>Расшифровка файла</title>
+<link rel="manifest" href="/manifest.webmanifest">
+<link rel="icon" href="/icon-192.png" type="image/png">
+<link rel="apple-touch-icon" href="/icon-192.png">
+<meta name="mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-status-bar-style" content="default">
+<meta name="apple-mobile-web-app-title" content="Secret-bot">
 <style>
 :root{color-scheme:light dark}
 body{font-family:system-ui,-apple-system,sans-serif;max-width:420px;margin:12vh auto;padding:0 16px}
@@ -155,8 +167,80 @@ if(form) form.addEventListener('submit', async (ev) => {
     setTimeout(()=>location.reload(), 700);
   }catch(e){ statusMsg('❌ ' + (e && e.message ? e.message : e)); if(btn) btn.disabled = false; }
 });
+if('serviceWorker' in navigator){
+  navigator.serviceWorker.register('/sw.js').catch(function(){ /* офлайн-кэш не критичен */ });
+}
 </script>
 </body></html>"""
+
+# ------------------------------- PWA (Android) --------------------------------
+# Страница уже адаптивная (viewport, max-width 420px), поэтому для Android
+# достаточно PWA: ярлык на главном экране через «Добавить на главный экран»
+# в Chrome. Без манифеста и service worker браузер такое не предложит.
+
+MANIFEST = {
+    "name": "Secret-bot — расшифровка файла",
+    "short_name": "Secret-bot",
+    "description": "Расшифровка файла по ссылке из Telegram",
+    "start_url": ".",
+    "scope": ".",
+    "display": "standalone",
+    "orientation": "portrait",
+    "background_color": "#1a56a0",
+    "theme_color": "#1a56a0",
+    "lang": "ru",
+    "icons": [
+        {"src": "/icon-192.png", "sizes": "192x192", "type": "image/png",
+         "purpose": "any"},
+        {"src": "/icon-512.png", "sizes": "512x512", "type": "image/png",
+         "purpose": "any"},
+        {"src": "/icon-512.png", "sizes": "512x512", "type": "image/png",
+         "purpose": "maskable"},
+    ],
+}
+
+SW_JS = """// Secret-bot: минимальный service worker, чтобы страницу можно было
+// поставить на главный экран Android и открывать без сети.
+const CACHE = 'secret-bot-v1';
+const CORE = ['/icon-192.png', '/icon-512.png', '/manifest.webmanifest'];
+self.addEventListener('install', function(e){
+  e.waitUntil(caches.open(CACHE).then(function(c){ return c.addAll(CORE); })
+    .then(function(){ return self.skipWaiting(); }));
+});
+self.addEventListener('activate', function(e){
+  e.waitUntil(caches.keys().then(function(keys){
+    return Promise.all(keys.filter(function(k){ return k !== CACHE; })
+      .map(function(k){ return caches.delete(k); }));
+  }).then(function(){ return self.clients.claim(); }));
+});
+self.addEventListener('fetch', function(e){
+  const req = e.request;
+  if(req.method !== 'GET') return;
+  let url;
+  try{ url = new URL(req.url); }catch(err){ return; }
+  if(url.origin !== self.location.origin) return;
+  if(req.mode === 'navigate'){
+    // Страницы: сначала сеть, при недоступности — из кэша.
+    e.respondWith(fetch(req).then(function(r){
+      const copy = r.clone();
+      caches.open(CACHE).then(function(c){ c.put(req, copy); }).catch(function(){});
+      return r;
+    }).catch(function(){ return caches.match(req); }));
+    return;
+  }
+  // Статика: сначала кэш.
+  e.respondWith(caches.match(req).then(function(hit){
+    if(hit) return hit;
+    return fetch(req).then(function(r){
+      if(r.ok){
+        const copy = r.clone();
+        caches.open(CACHE).then(function(c){ c.put(req, copy); }).catch(function(){});
+      }
+      return r;
+    });
+  }));
+});
+"""
 
 # token -> (число неудач, время первой неудачи)
 _fails: dict[str, tuple[int, float]] = {}
@@ -493,6 +577,37 @@ async def healthz() -> dict:
     return {"ok": True}
 
 
+def _static_path(name: str) -> str:
+    """Путь к файлу в static/ рядом с web_app.py."""
+    return os.path.join(os.path.dirname(os.path.abspath(__file__)), "static", name)
+
+
+def pwa_manifest() -> JSONResponse:
+    """GET /manifest.webmanifest — описание PWA для установки на экран."""
+    return JSONResponse(MANIFEST)
+
+
+def pwa_sw() -> Response:
+    """GET /sw.js — service worker."""
+    return Response(SW_JS, media_type="application/javascript",
+                    headers={"Cache-Control": "no-cache"})
+
+
+def pwa_icon(size: int):
+    """GET /icon-{size}.png — иконка. Фабрика: размер подставляется в путь."""
+
+    async def handler() -> Response:
+        path = _static_path(f"icon-{size}.png")
+        if not os.path.isfile(path):
+            return PlainTextResponse("нет иконки", status_code=404)
+        with open(path, "rb") as handle:
+            data = handle.read()
+        return Response(data, media_type="image/png",
+                        headers={"Cache-Control": "public, max-age=86400"})
+
+    return handler
+
+
 def create_app(bot: Bot) -> FastAPI:
     """Собирает FastAPI-приложение сайта. Бот нужен, чтобы отдать файл."""
     app = FastAPI(
@@ -512,4 +627,12 @@ def create_app(bot: Bot) -> FastAPI:
     app.add_api_route("/d/{token}/pw/login/verify", pw_login_verify,
                       methods=["POST"], response_class=JSONResponse)
     app.add_api_route("/healthz", healthz, methods=["GET"], response_class=JSONResponse)
+    # PWA: манифест, service worker и иконки для установки на экран Android
+    app.add_api_route("/manifest.webmanifest", pwa_manifest,
+                      methods=["GET"], response_class=JSONResponse)
+    app.add_api_route("/sw.js", pwa_sw, methods=["GET"], response_class=Response)
+    app.add_api_route("/icon-192.png", pwa_icon(192),
+                      methods=["GET"], response_class=Response)
+    app.add_api_route("/icon-512.png", pwa_icon(512),
+                      methods=["GET"], response_class=Response)
     return app
