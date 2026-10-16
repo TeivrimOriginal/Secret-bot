@@ -1,0 +1,13 @@
+# Артефакты сборки
+build/dist/
+build/work/
+build/*.spec.cache
+__pycache__/
+*.pyc
+
+# Данные времени выполнения
+*.db
+*.db-journal
+*.db-wal
+*.db-shm
+secret-bot.env

@@ -9,29 +9,38 @@ Telegram-бот (aiogram) шифрует файлы паролем и выдаё
 secret-bot/
 ├── crypt_bot.py       шифрование, SQLite, ядро WebAuthn, хендлеры бота, main()
 ├── web_app.py         сайт на FastAPI: страница, выдача файла, эндпоинты passkey
+├── launcher.py        точка входа (--version, --selftest, конфиг secret-bot.env)
+├── build/             сборка .exe и установщика (см. «Сборка и установка»)
 └── README.md          этот файл
 
 (в корне рабочего репозитория)
-test-passkey.py        48 проверок: юнит WebAuthn + сквозной HTTP через FastAPI
+test-passkey.py        53 проверки: юнит WebAuthn + сквозной HTTP через FastAPI
 pw-demo-server.py      тот же сайт без Telegram — для проверки в браузере
 ```
 
 ## Запуск
 
 ```bash
-pip install aiogram fastapi uvicorn cbor2 cryptography python-multipart
+pip install -r requirements.txt
 
 export BOT_TOKEN=123456:AA...            # токен от @BotFather
 export BASE_URL=https://files.example.com # публичный адрес сайта, без слеша
 export ENABLE_WEB=1                       # включить сайт (по умолчанию выключен)
 export WEB_HOST=0.0.0.0 WEB_PORT=8080
-python crypt_bot.py
+python launcher.py
 ```
+
+`launcher.py` — рекомендуемая точка входа: он читает файл `secret-bot.env`
+(если он есть рядом или в текущем каталоге), умеет `--version` и
+`--selftest`, и в собранном `.exe` он же выбирает каталог для базы.
+Запуск `python crypt_bot.py` напрямую тоже работает, но тогда все настройки
+нужно задавать только переменными окружения.
 
 Проверка без Telegram (страница на localhost:8099, слово `demo-codeword-1`):
 
 ```bash
 python pw-demo-server.py     # http://localhost:8099/d/demo-token-1
+python launcher.py --selftest
 python test-passkey.py       # 53 проверки, exit=0
 ```
 
@@ -54,6 +63,8 @@ python test-passkey.py       # 53 проверки, exit=0
 | `PW_CHALLENGE_TTL` | `300` | срок жизни одноразового challenge |
 | `PW_SESSION_TTL` | `2592000` (30 суток) | сколько живёт вход по passkey |
 | `MAX_FAILS` / `FAIL_WINDOW` | `5` / `900` | сколько неверных слов терпит ссылка и за какой период |
+| `SECRET_BOT_ENV` | — | путь к файлу настроек; иначе ищется рядом с программой, в текущем каталоге и в `%APPDATA%\SecretBot` |
+| `LOG_LEVEL` | `INFO` | уровень логов |
 
 Порт по умолчанию 8080; на машине разработки он занят Steam
 (`steamwebhelper.exe`), поэтому демо-сервер слушает 8099.
@@ -153,3 +164,75 @@ aiohttp-сессия Telegram создаётся в цикле бота, и вы
 - Для продакшена: HTTPS обязателен (без него WebAuthn не работает),
   `MemoryStorage` стоит заменить на `RedisStorage`, а `DB_PATH` держать вне
   публичного каталога.
+
+## Сборка и установка (Windows)
+
+Готовый установщик ничего не требует от пользователя: Python и все
+библиотеки внутри, права администратора не нужны.
+
+### Для пользователя
+
+```
+SecretBot-<версия>-setup.exe          установщик (ярлыки, конфиг, удаление)
+SecretBot-<версия>-portable.zip       то же без установки, распаковать и запустить
+```
+
+Что делает установщик:
+
+* кладёт программу в `%LOCALAPPDATA%\Programs\Secret-bot`;
+* создаёт шаблон настроек `%APPDATA%\SecretBot\secret-bot.env` и предлагает
+  его открыть (`BOT_TOKEN` и `BASE_URL` нужно вписать руками);
+* делает ярлыки: запуск, настройки, «Проверить сборку», папка с данными;
+* при удалении сносит программу и ярлыки, но **не** трогает
+  `%APPDATA%\SecretBot` — там ключи ссылок и passkey.
+
+Проверка без Telegram:
+
+```
+SecretBot.exe --selftest     крипто, база, сайт, страница, 404
+SecretBot.exe --version
+```
+
+### Для разработчика
+
+Нужны `pyinstaller` и Inno Setup 6 (для установщика):
+
+```
+pip install -r requirements.txt pyinstaller
+python build\build.py
+```
+
+`build/build.py` по шагам: создаёт иконку, компилирует исходники, гоняет
+`--selftest` из исходников, собирает onedir-сборку через PyInstaller,
+гоняет `--selftest` уже у собранного `.exe` и упаковывает всё установщиком
+Inno Setup. Версия берётся из `launcher.py` — один источник правды, менять
+только там.
+
+Затем артефакты:
+
+```
+python build\release.py             портативный zip + SHA256SUMS.txt
+python build\release.py --publish   ещё и релиз на GitHub (через gh)
+```
+
+Файлы сборки:
+
+| Файл | Назначение |
+|---|---|
+| `build/secret-bot.spec` | описание сборки PyInstaller (onedir) |
+| `build/installer.iss` | сценарий Inno Setup |
+| `build/build.py` | оркестрация сборки |
+| `build/release.py` | портативный zip, контрольные суммы, публикация |
+| `build/make-icon.py` | рисует `secret-bot.ico` (без готовых ассетов) |
+
+Грабли, на которые уже наступили (чтобы не повторять):
+
+* **`unittest` нельзя исключать** из сборки: aiogram делает
+  `from unittest.mock import sentinel`, и без него exe падает на импорте
+  `crypt_bot` (`ModuleNotFoundError: No module named 'unittest'`).
+* **onedir, а не onefile**: uvicorn и fastapi тянут много подпакетов, и
+  onefile распаковывается при каждом старте. Установщик всё равно один файл.
+* **`--selftest` обязателен в сборке**: обычный запуск требует живого
+  `BOT_TOKEN`, поэтому без самотеста frozen-сборку нечем проверить.
+* Сборка на Python, а не на PowerShell: Windows PowerShell 5.1 в этом
+  окружении спотыкался на скриптах с кириллицей.
