@@ -2,6 +2,7 @@
 build/dist/
 build/work/
 build/*.spec.cache
+build/*.7z
 __pycache__/
 *.pyc
 
