@@ -1,0 +1,34 @@
+plugins {
+    id 'com.android.application'
+}
+
+android {
+    namespace 'com.secretbot.app'
+    compileSdk 34
+
+    defaultConfig {
+        applicationId "com.secretbot.app"
+        minSdk 24
+        targetSdk 34
+        versionCode 3
+        versionName "1.2.0"
+    }
+
+    buildTypes {
+        release {
+            minifyEnabled false
+        }
+    }
+
+    compileOptions {
+        sourceCompatibility JavaVersion.VERSION_1_8
+        targetCompatibility JavaVersion.VERSION_1_8
+    }
+}
+
+// Зависимостей нет намеренно: приложение — обёртка над страницой сайта,
+// всё (шифрование, passkey, скачивание) делает сервер и JS страницы.
+// androidx.appcompat и androidx.webkit были лишними: виджеты платформенные,
+// а WebAuthn в WebView всё равно не документирован как гарантия (см. README).
+dependencies {
+}

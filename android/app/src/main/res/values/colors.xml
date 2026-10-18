@@ -1,0 +1,5 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <!-- Цвет совпадает с иконкой и theme_color в PWA-манифесте -->
+    <color name="blue">#1a56a0</color>
+</resources>

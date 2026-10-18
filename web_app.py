@@ -6,6 +6,7 @@ uvicorn запускается как asyncio-задача, сигналами �
 занимается aiogram (см. crypt_bot.main()).
 
 Маршруты:
+    GET  /                                 заставка: вставить ссылку из Telegram
     GET  /d/{token}                        страница ввода кодового слова
     POST /d/{token}                        проверка слова и выдача файла
     GET  /d/{token}/get                    файл после входа по passkey
@@ -89,6 +90,7 @@ const TOKEN = "%TOKEN%";
 function el(id){return document.getElementById(id);}
 function statusMsg(msg){const s=el('pw-status'); if(s) s.textContent = msg || '';}
 function toB64(buf){let s='';const b=new Uint8Array(buf);for(let i=0;i<b.length;i++)s+=String.fromCharCode(b[i]);return btoa(s);}
+function toB64Big(u8){let s='',chunk=0x8000;for(let i=0;i<u8.length;i+=chunk){s+=String.fromCharCode.apply(null,u8.subarray(i,i+chunk));}return btoa(s);}
 function fromB64(s){s=s.replace(/-/g,'+').replace(/_/g,'/');while(s.length%4)s+='=';const bin=atob(s);const a=new Uint8Array(bin.length);for(let i=0;i<bin.length;i++)a[i]=bin.charCodeAt(i);return a;}
 async function postJSON(url, payload){
   const r = await fetch(url, {method:'POST', headers:{'Content-Type':'application/json'}, body: JSON.stringify(payload || {})});
@@ -162,6 +164,19 @@ if(form) form.addEventListener('submit', async (ev) => {
     const m2 = cd.match(/filename="([^"]+)"/i);
     if(m1){ try{ name = decodeURIComponent(m1[1]); }catch(e){ name = m1[1]; } }
     else if(m2) name = m2[1];
+    if(window.AndroidFile && window.AndroidFile.saveBase64){
+      // Обёртка Secret-bot на Android: WebView не умеет скачивать blob-ссылку,
+      // поэтому отдаём содержимое мостом — он пишет файл на устройство.
+      let bytes;
+      try{ bytes = new Uint8Array(await blob.arrayBuffer()); }
+      catch(e){ statusMsg('❌ Не удалось прочитать файл'); if(btn) btn.disabled = false; return; }
+      let saved = false;
+      try{ saved = !!window.AndroidFile.saveBase64(toB64Big(bytes), name); }catch(e){ saved = false; }
+      statusMsg(saved ? '✅ Файл сохранён на устройство' : '❌ Не удалось сохранить файл');
+      if(saved) setTimeout(()=>location.reload(), 700);
+      if(btn) btn.disabled = false;
+      return;
+    }
     const a = document.createElement('a');
     a.href = URL.createObjectURL(blob); a.download = name;
     document.body.appendChild(a); a.click(); a.remove();
@@ -247,6 +262,53 @@ self.addEventListener('fetch', function(e){
 
 # token -> (число неудач, время первой неудачи)
 _fails: dict[str, tuple[int, float]] = {}
+
+
+# ------------------------------- Главная страница ---------------------------
+
+INDEX_PAGE = """<!doctype html>
+<html lang="ru"><head><meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<meta name="robots" content="noindex">
+<meta name="theme-color" content="#1a56a0">
+<title>Secret-bot</title>
+<link rel="icon" href="/icon-192.png" type="image/png">
+<style>
+body{font-family:system-ui,-apple-system,sans-serif;max-width:420px;margin:12vh auto;padding:0 16px}
+h1{font-size:1.4rem}
+input,button{width:100%;box-sizing:border-box;padding:12px;font-size:1rem;margin-top:10px;border-radius:8px;border:1px solid #8886}
+button{background:#2a7ae4;color:#fff;border:0;cursor:pointer}
+.hint{color:#777;font-size:.85rem;margin-top:8px}
+</style></head><body>
+<h1>🔐 Secret-bot</h1>
+<p>Здесь открываются ссылки на зашифрованные файлы из Telegram.</p>
+<p>Вставьте свою ссылку — откроется страница, где нужно кодовое слово.</p>
+<input id="link" placeholder="https://.../d/токен" autocapitalize="off" autocorrect="off">
+<button id="go">Открыть</button>
+<div class="hint" id="msg"></div>
+<script>
+const input = document.getElementById('link');
+const msg = document.getElementById('msg');
+function openLink(){
+  let v = input.value.trim();
+  if(!v){ msg.textContent = 'Вставьте ссылку из Telegram.'; return; }
+  if(v.indexOf('/d/') === -1){ msg.textContent = 'Это не ссылка на файл: нет /d/ в адресе.'; return; }
+  if(!/^https?:\\/\\//i.test(v)){ v = (location.protocol === 'https:' ? 'https://' : 'http://') + v; }
+  location.href = v;
+}
+document.getElementById('go').addEventListener('click', openLink);
+input.addEventListener('keydown', function(e){ if(e.key === 'Enter') openLink(); });
+</script>
+</body></html>"""
+
+
+async def web_index() -> HTMLResponse:
+    """GET / — заставка для мобильной обёртки и для тех, кто открыл адрес руками.
+
+    Отдельная страница нужна ещё потому, что Android-приложение просит адрес
+    сайта один раз и открывает его целиком: без `/` пользователь видел 404.
+    """
+    return HTMLResponse(INDEX_PAGE)
 
 
 def _is_locked(token: str) -> bool:
@@ -618,6 +680,7 @@ def create_app(bot: Bot) -> FastAPI:
         docs_url=None, redoc_url=None, openapi_url=None,  # документации API не нужно
     )
     app.state.bot = bot
+    app.add_api_route("/", web_index, methods=["GET"], response_class=HTMLResponse)
     app.add_api_route("/d/{token}", web_form, methods=["GET"], response_class=HTMLResponse)
     app.add_api_route("/d/{token}", web_download, methods=["POST"], response_class=Response)
     app.add_api_route("/d/{token}/get", web_get, methods=["GET"], response_class=Response)

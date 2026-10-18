@@ -205,7 +205,7 @@ def run_selftest() -> int:
         server, task = await cb.start_site(DummyBot(), "127.0.0.1", port)
         try:
             results = {}
-            for path in ("/healthz", "/d/selftest-token", "/d/no-such-token",
+            for path in ("/", "/healthz", "/d/selftest-token", "/d/no-such-token",
                          "/manifest.webmanifest", "/sw.js",
                          "/icon-192.png", "/icon-512.png"):
                 results[path] = await asyncio.to_thread(http_get, path)
@@ -226,6 +226,13 @@ def run_selftest() -> int:
             print("  ✅ страница /d/<token> отдаётся")
         else:
             problems.append(f"сайт: /d/selftest-token -> {page_code}")
+
+        # Заставка нужна мобильной обёртке: она открывает адрес сайта целиком
+        index_code, index_body = pages["/"]
+        if index_code == 200 and 'id="link"' in index_body:
+            print("  ✅ заставка / отдаётся")
+        else:
+            problems.append(f"сайт: / -> {index_code}")
 
         miss_code, _ = pages["/d/no-such-token"]
         if miss_code == 404:

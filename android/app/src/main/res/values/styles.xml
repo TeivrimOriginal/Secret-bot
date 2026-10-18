@@ -1,0 +1,11 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <!-- Платформенная тема, а не AppCompat: в приложении нет ни одного
+         androidx-виджета, а Theme.AppCompat требует AppCompatActivity.
+         Плюс сборка тянет на одну зависимость меньше. -->
+    <style name="Theme.SecretBot" parent="android:Theme.Material.Light.NoActionBar">
+        <item name="colorPrimary">@color/blue</item>
+        <item name="android:statusBarColor">@color/blue</item>
+        <item name="android:windowBackground">@color/blue</item>
+    </style>
+</resources>
