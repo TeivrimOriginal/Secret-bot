@@ -140,6 +140,16 @@ def run_selftest() -> int:
         return 1
     print(f"  ✅ импорт crypt_bot (RP_ID={cb.RP_ID})")
 
+    # Модули, на которые разбит бот: каждый должен импортироваться сам
+    # по себе — иначе в собранном .exe не хватит скрытого импорта.
+    try:
+        for module in ("config", "crypto", "database", "passkey",
+                       "private", "groups", "web_app"):
+            __import__(module)
+        print("  ✅ модули пакета импортируются по одному")
+    except Exception as exc:  # noqa: BLE001
+        problems.append(f"импорт модуля: {exc!r}")
+
     try:
         for module in ("fastapi", "uvicorn", "aiogram", "cbor2", "cryptography",
                        "python_multipart"):
@@ -151,9 +161,9 @@ def run_selftest() -> int:
     # Шифрование/расшифровка
     payload = b"selftest payload\n" * 20
     try:
-        blob = cb.encrypt_file(payload, "selftest-codeword")
+        blob = cb.encrypt_file_sync(payload, "selftest-codeword")
         ok_marker = cb.is_encrypted(blob)
-        restored = cb.decrypt_file(blob, "selftest-codeword")
+        restored = cb.decrypt_file_sync(blob, "selftest-codeword")
         if ok_marker and restored == payload:
             print("  ✅ шифрование и расшифровка")
         else:

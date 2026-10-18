@@ -37,7 +37,10 @@ from aiogram import Bot
 from fastapi import FastAPI, Request, Response
 from fastapi.responses import HTMLResponse, JSONResponse, PlainTextResponse
 
-import crypt_bot as cb
+import config
+import crypto
+import database
+import passkey
 from cryptography.exceptions import InvalidTag
 
 logger = logging.getLogger("cryptbot.web")
@@ -251,15 +254,15 @@ def _is_locked(token: str) -> bool:
     if not entry:
         return False
     count, first = entry
-    if time.time() - first > cb.FAIL_WINDOW:
+    if time.time() - first > config.FAIL_WINDOW:
         _fails.pop(token, None)
         return False
-    return count >= cb.MAX_FAILS
+    return count >= config.MAX_FAILS
 
 
 def _register_fail(token: str) -> None:
     count, first = _fails.get(token, (0, time.time()))
-    if time.time() - first > cb.FAIL_WINDOW:
+    if time.time() - first > config.FAIL_WINDOW:
         count, first = 0, time.time()
     _fails[token] = (count + 1, first)
 
@@ -299,7 +302,7 @@ async def _fetch_and_decrypt(bot: Bot, file_id: str, file_name: str, password: s
     """Скачивает зашифрованный файл из Telegram и расшифровывает его."""
     buf = io.BytesIO()
     await bot.download(file_id, destination=buf)
-    return await cb.run_crypto(cb.decrypt_file, buf.getvalue(), password)
+    return await crypto.decrypt_file(buf.getvalue(), password)
 
 
 def _file_response(data: bytes, file_name: str) -> Response:
@@ -315,25 +318,25 @@ def _file_response(data: bytes, file_name: str) -> Response:
 
 def _apply_grant(response: Response, token: str) -> None:
     """Ставит короткую «печать»: человек только что ввёл верное слово."""
-    name, value = cb._grant_cookie(token)
+    name, value = passkey.grant_cookie(token)
     response.set_cookie(
-        name, value, max_age=cb.PW_GRANT_TTL, path=f"/d/{token}",
-        httponly=True, secure=cb.BASE_URL.startswith("https"), samesite="lax",
+        name, value, max_age=config.PW_GRANT_TTL, path=f"/d/{token}",
+        httponly=True, secure=config.BASE_URL.startswith("https"), samesite="lax",
     )
 
 
 def _apply_session(response: Response, token: str, cred_id: str) -> None:
     """Ставит долгую сессию после входа по passkey."""
-    name, value = cb._session_cookie(token, cred_id)
+    name, value = passkey.session_cookie(token, cred_id)
     response.set_cookie(
-        name, value, max_age=cb.PW_SESSION_TTL, path=f"/d/{token}",
-        httponly=True, secure=cb.BASE_URL.startswith("https"), samesite="lax",
+        name, value, max_age=config.PW_SESSION_TTL, path=f"/d/{token}",
+        httponly=True, secure=config.BASE_URL.startswith("https"), samesite="lax",
     )
 
 
-def _page_blocks(token: str, auth_ok: bool, grant_ok: bool) -> str:
+async def _page_blocks(token: str, auth_ok: bool, grant_ok: bool) -> str:
     """Кнопки passkey под ситуацию: уже вошёл / можно создавать / можно войти."""
-    if not cb.ENABLE_PASSKEY:
+    if not config.ENABLE_PASSKEY:
         return ""
     blocks = []
     if auth_ok:
@@ -341,7 +344,7 @@ def _page_blocks(token: str, auth_ok: bool, grant_ok: bool) -> str:
             f'<a class="btn" href="/d/{html.escape(token)}/get">'
             "⬇️ Скачать файл (вход по passkey пройден)</a>"
         )
-    has_pw = bool(cb._pw_list(token))
+    has_pw = bool(await database.passkey_list(token))
     if grant_ok:
         blocks.append('<div class="divider">Кодовое слово подтверждено</div>')
         blocks.append('<button class="sec" id="pw-setup" type="button">'
@@ -360,17 +363,17 @@ def _page_blocks(token: str, auth_ok: bool, grant_ok: bool) -> str:
 
 async def web_form(token: str, request: Request) -> Response:
     """GET /d/{token} — страница ввода кодового слова (и кнопок passkey)."""
-    rec = await cb.db_get(token)
+    rec = await database.get_link(token)
     if not rec:
         return PlainTextResponse(LINK_GONE, status_code=404)
-    auth_ok = cb._session_valid(request.cookies, token) is not None
-    grant_ok = cb._grant_valid(request.cookies, token)
-    return render_page(rec[1], token=token, blocks=_page_blocks(token, auth_ok, grant_ok))
+    auth_ok = passkey.session_valid(request.cookies, token) is not None
+    grant_ok = passkey.grant_valid(request.cookies, token)
+    return render_page(rec[1], token=token, blocks=await _page_blocks(token, auth_ok, grant_ok))
 
 
 async def web_download(token: str, request: Request) -> Response:
     """POST /d/{token} — проверка кодового слова и выдача расшифрованного файла."""
-    rec = await cb.db_get(token)
+    rec = await database.get_link(token)
     if not rec:
         return PlainTextResponse(LINK_GONE, status_code=404)
     file_id, file_name = rec
@@ -397,37 +400,37 @@ async def web_download(token: str, request: Request) -> Response:
 
     _fails.pop(token, None)
     response = _file_response(data, file_name)
-    if cb.ENABLE_PASSKEY:
+    if config.ENABLE_PASSKEY:
         # Открываем окно регистрации passkey и держим обёрнутую копию
         # кодового слова в памяти — в базу она попадёт только при
         # создании passkey (см. _pending_promote).
-        await asyncio.to_thread(cb._pending_set, token, password)
+        await database.pending_set(token, password)
         _apply_grant(response, token)
     return response
 
 
 async def web_get(token: str, request: Request) -> Response:
     """GET /d/{token}/get — выдача файла после входа по passkey."""
-    rec = await cb.db_get(token)
+    rec = await database.get_link(token)
     if not rec:
         return PlainTextResponse(LINK_GONE, status_code=404)
     file_id, file_name = rec
-    grant_ok = cb._grant_valid(request.cookies, token)
+    grant_ok = passkey.grant_valid(request.cookies, token)
 
-    if cb._session_valid(request.cookies, token) is None:
+    if passkey.session_valid(request.cookies, token) is None:
         return render_page(
             file_name, "Войдите по passkey или введите кодовое слово.", 403,
-            token=token, blocks=_page_blocks(token, False, grant_ok),
+            token=token, blocks=await _page_blocks(token, False, grant_ok),
         )
 
-    wrap = await asyncio.to_thread(cb._vault_get, token)
+    wrap = await database.vault_get(token)
     if not wrap:
         return render_page(
             file_name,
             "Ключ для этой ссылки не сохранён — введите кодовое слово ещё раз.",
-            403, token=token, blocks=_page_blocks(token, True, grant_ok),
+            403, token=token, blocks=await _page_blocks(token, True, grant_ok),
         )
-    password = await asyncio.to_thread(cb._vault_password, wrap)
+    password = await database.vault_password(wrap)
 
     try:
         data = await _fetch_and_decrypt(_bot(request), file_id, file_name, password)
@@ -444,19 +447,19 @@ async def web_get(token: str, request: Request) -> Response:
 
 async def pw_register_options(token: str, request: Request) -> Response:
     """POST /d/{token}/pw/register/options — challenge для создания passkey."""
-    if not cb.ENABLE_PASSKEY:
+    if not config.ENABLE_PASSKEY:
         return _json_error("Passkey выключен", 403)
-    if not await cb.db_get(token):
+    if not await database.get_link(token):
         return _json_error("Ссылка недействительна", 404)
-    if not cb._grant_valid(request.cookies, token):
+    if not passkey.grant_valid(request.cookies, token):
         return _json_error("Сначала введите кодовое слово для этой ссылки", 403)
-    challenge = await asyncio.to_thread(cb._challenge_new, token, "register")
-    creds = await asyncio.to_thread(cb._pw_list, token)
+    challenge = await database.challenge_new(token, "register")
+    creds = await database.passkey_list(token)
     options = {
         "publicKey": {
-            "rp": {"name": "Secret-bot", "id": cb.RP_ID},
+            "rp": {"name": "Secret-bot", "id": config.RP_ID},
             "user": {
-                "id": cb._b64u(hashlib.sha256(f"{cb.RP_ID}|{token}".encode()).digest()),
+                "id": passkey.b64u(hashlib.sha256(f"{config.RP_ID}|{token}".encode()).digest()),
                 "name": f"link-{token[:10]}",
                 "displayName": f"Ссылка {token[:10]}",
             },
@@ -479,32 +482,32 @@ async def pw_register_options(token: str, request: Request) -> Response:
 
 async def pw_register_verify(token: str, request: Request) -> Response:
     """POST /d/{token}/pw/register/verify — сохраняет passkey и ключ ссылки."""
-    if not cb.ENABLE_PASSKEY:
+    if not config.ENABLE_PASSKEY:
         return _json_error("Passkey выключен", 403)
-    if not await cb.db_get(token):
+    if not await database.get_link(token):
         return _json_error("Ссылка недействительна", 404)
-    if not cb._grant_valid(request.cookies, token):
+    if not passkey.grant_valid(request.cookies, token):
         return _json_error("Сначала введите кодовое слово для этой ссылки", 403)
     try:
         body = await request.json()
     except Exception:
         return _json_error("Некорректный запрос")
     try:
-        client_json = cb._unb64u(str(body.get("clientDataJSON", "")))
-        attestation_object = cb._unb64u(str(body.get("attestationObject", "")))
+        client_json = passkey.unb64u(str(body.get("clientDataJSON", "")))
+        attestation_object = passkey.unb64u(str(body.get("attestationObject", "")))
         challenge = str(json.loads(client_json).get("challenge", ""))
     except Exception:
         return _json_error("Некорректный ответ браузера")
-    if not await asyncio.to_thread(cb._challenge_take, token, "register", challenge):
+    if not await database.challenge_take(token, "register", challenge):
         return _json_error("Challenge устарел — нажмите кнопку ещё раз")
     try:
-        cred_id, public_key, alg, counter = cb.webauthn_register(
+        cred_id, public_key, alg, counter = passkey.webauthn_register(
             client_json, attestation_object, challenge
         )
     except ValueError as exc:
         return _json_error(str(exc))
-    await asyncio.to_thread(cb._pw_add, token, cred_id, public_key, alg, counter)
-    if not await asyncio.to_thread(cb._pending_promote, token):
+    await database.passkey_add(token, cred_id, public_key, alg, counter)
+    if not await database.pending_promote(token):
         logger.warning("Passkey создан без сохранённого ключа для %s", token[:8])
     logger.info("Passkey создан: %s… (ссылка %s)", cred_id[:12], token[:8])
     return JSONResponse({"ok": True})
@@ -512,17 +515,17 @@ async def pw_register_verify(token: str, request: Request) -> Response:
 
 async def pw_login_options(token: str, request: Request) -> Response:
     """POST /d/{token}/pw/login/options — challenge для входа по passkey."""
-    if not cb.ENABLE_PASSKEY:
+    if not config.ENABLE_PASSKEY:
         return _json_error("Passkey выключен", 403)
-    if not await cb.db_get(token):
+    if not await database.get_link(token):
         return _json_error("Ссылка недействительна", 404)
-    creds = await asyncio.to_thread(cb._pw_list, token)
+    creds = await database.passkey_list(token)
     if not creds:
         return _json_error("Для этой ссылки passkey ещё не создан", 400)
-    challenge = await asyncio.to_thread(cb._challenge_new, token, "login")
+    challenge = await database.challenge_new(token, "login")
     options = {
         "publicKey": {
-            "rpId": cb.RP_ID,
+            "rpId": config.RP_ID,
             "challenge": challenge,
             "timeout": 60000,
             "allowCredentials": [{"type": "public-key", "id": c} for c in creds],
@@ -534,37 +537,37 @@ async def pw_login_options(token: str, request: Request) -> Response:
 
 async def pw_login_verify(token: str, request: Request) -> Response:
     """POST /d/{token}/pw/login/verify — проверка подписи и выдача сессии."""
-    if not cb.ENABLE_PASSKEY:
+    if not config.ENABLE_PASSKEY:
         return _json_error("Passkey выключен", 403)
-    if not await cb.db_get(token):
+    if not await database.get_link(token):
         return _json_error("Ссылка недействительна", 404)
     try:
         body = await request.json()
     except Exception:
         return _json_error("Некорректный запрос")
     cred_id = str(body.get("id", ""))
-    record = await asyncio.to_thread(cb._pw_get, cred_id) if cred_id else None
+    record = await database.passkey_get(cred_id) if cred_id else None
     if not record or record[0] != token:
         return _json_error("passkey не найден — войдите кодовым словом", 404)
     try:
-        client_json = cb._unb64u(str(body.get("clientDataJSON", "")))
-        auth_data = cb._unb64u(str(body.get("authenticatorData", "")))
-        signature = cb._unb64u(str(body.get("signature", "")))
+        client_json = passkey.unb64u(str(body.get("clientDataJSON", "")))
+        auth_data = passkey.unb64u(str(body.get("authenticatorData", "")))
+        signature = passkey.unb64u(str(body.get("signature", "")))
         challenge = str(json.loads(client_json).get("challenge", ""))
     except Exception:
         return _json_error("Некорректный ответ браузера")
-    if not await asyncio.to_thread(cb._challenge_take, token, "login", challenge):
+    if not await database.challenge_take(token, "login", challenge):
         return _json_error("Challenge устарел — нажмите кнопку ещё раз")
     _token, public_key, counter_stored = record
     try:
-        counter = cb.webauthn_assert(client_json, auth_data, signature, challenge, public_key)
+        counter = passkey.webauthn_assert(client_json, auth_data, signature, challenge, public_key)
     except ValueError as exc:
         return _json_error(str(exc), 403)
     if counter > 0 and counter_stored > 0 and counter <= counter_stored:
         logger.warning("Счётчик passkey не вырос (%s <= %s)", counter, counter_stored)
         return _json_error("Счётчик ключа не изменился — вход запрещён", 403)
     if counter:
-        await asyncio.to_thread(cb._pw_bump, cred_id, counter)
+        await database.passkey_bump(cred_id, counter)
     logger.info("Вход по passkey: %s… (ссылка %s)", cred_id[:12], token[:8])
     response = JSONResponse({"ok": True})
     _apply_session(response, token, cred_id)
@@ -573,7 +576,7 @@ async def pw_login_verify(token: str, request: Request) -> Response:
 
 async def healthz() -> dict:
     """GET /healthz — сайт жив, мастер-ключ доступен."""
-    await asyncio.to_thread(cb._master_key)
+    await database.master_key()
     return {"ok": True}
 
 

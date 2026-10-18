@@ -89,12 +89,16 @@ def main() -> int:
         step(f"Иконка уже есть: {ICON}")
 
     # --- проверки перед сборкой ----------------------------------------
+    # Компилируем ВСЕ модули пакета, а не только точки входа: бот разбит
+    # на config/crypto/database/passkey/private/groups, и опечатка в любом
+    # из них иначе всплыла бы только в собранном .exe.
     step("Компиляция")
     if run([
         sys.executable, "-m", "py_compile",
-        os.path.join(ROOT, "launcher.py"),
-        os.path.join(ROOT, "crypt_bot.py"),
-        os.path.join(ROOT, "web_app.py"),
+        *[os.path.join(ROOT, name) for name in (
+            "launcher.py", "config.py", "crypto.py", "database.py",
+            "passkey.py", "private.py", "groups.py", "crypt_bot.py", "web_app.py",
+        )],
     ]).returncode:
         fail("py_compile")
 
