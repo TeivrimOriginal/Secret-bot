@@ -174,13 +174,7 @@ def run_selftest() -> int:
     # База
     try:
         cb._db_add("selftest-token", "file-id", "имя.txt")
-        row = cb.db_get_sync("selftest-token") if hasattr(cb, "db_get_sync") else None
-        if row is None:
-            with cb._db_lock:
-                row = cb._db.execute(
-                    "SELECT file_id, file_name FROM links WHERE token = ?",
-                    ("selftest-token",),
-                ).fetchone()
+        row = cb._db_get("selftest-token")
         if row and row[0] == "file-id":
             print("  ✅ база SQLite пишется и читается")
         else:
