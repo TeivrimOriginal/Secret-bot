@@ -20,7 +20,7 @@ secret-bot/
 └── README.md         этот файл
 
 (в корне рабочего репозитория)
-test-passkey.py        66 проверок: юнит WebAuthn + сквозной HTTP через FastAPI
+test-passkey.py        70 проверок: юнит WebAuthn + сквозной HTTP через FastAPI
 pw-demo-server.py      тот же сайт без Telegram — для проверки в браузере
 ```
 
@@ -54,7 +54,7 @@ python launcher.py
 ```bash
 python pw-demo-server.py     # http://localhost:8099/d/demo-token-1
 python launcher.py --selftest
-python test-passkey.py       # 66 проверок, exit=0
+python test-passkey.py       # 70 проверок, exit=0
 ```
 
 `test-passkey.py` гоняет HTTP через `fastapi.testclient`, то есть ему нужен
