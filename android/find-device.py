@@ -84,24 +84,33 @@ def read_name(data: bytes, offset: int, depth: int = 0) -> tuple:
 
 
 def parse_record(data: bytes, offset: int) -> tuple:
-    """Один RR: (имя, тип, класс, TTL, rdata, смещение после)."""
+    """Один RR: (имя, тип, класс, TTL, rdata, rdata_at, смещение после).
+
+    Возвращается и абсолютное смещение rdata: без него не разобрать сжатые
+    имена внутри rdata (PTR и SRV) — указатель отсчитывается от начала пакета.
+    """
     name, offset = read_name(data, offset)
     if offset + 10 > len(data):
-        return name, 0, 0, 0, b"", len(data)
+        return name, 0, 0, 0, b"", offset, len(data)
     rtype, rclass, ttl, rdlength = struct.unpack("!HHIH", data[offset:offset + 10])
     offset += 10
     rdata = data[offset:offset + rdlength]
-    return name, rtype, rclass, ttl, rdata, offset + rdlength
+    return name, rtype, rclass, ttl, rdata, offset, offset + rdlength
 
 
-def parse_srv(rdata: bytes, data: bytes) -> tuple:
-    """SRV: приоритет, вес, ПОРТ, цель. Порт — то, что нам и нужно."""
+def parse_srv(rdata: bytes, data: bytes, rdata_at: int) -> tuple:
+    """SRV: приоритет, вес, ПОРТ, цель.
+
+    Цель читается из ВСЕГО пакета по абсолютному смещению, а не из rdata.
+    В SRV цель почти всегда сжата указателем (`0xC0 xx`), а указатель
+    отсчитывается от начала сообщения. Прежний вариант звал
+    `read_name(rdata, 6)`: указатель уводил за пределы rdata, имя выходило
+    пустым, и в отчёте печаталось «цель=» без значения.
+    """
     if len(rdata) < 6:
         return None, ""
     port = struct.unpack("!H", rdata[4:6])[0]
-    target, _ = read_name(rdata, 6)
-    if not target:
-        target, _ = read_name(data, 0)
+    target, _ = read_name(data, rdata_at + 6)
     return port, target
 
 
@@ -148,16 +157,17 @@ def rr_names(data: bytes) -> tuple:
             break
         rtype, rclass, ttl, rdlength = struct.unpack("!HHIH", data[offset:offset + 10])
         offset += 10
+        rdata_at = offset                      # абсолютное начало rdata
         rdata = data[offset:offset + rdlength]
         offset += rdlength
         if rrname:
             names.add(rrname.lower())
         if rtype == 12:                       # PTR: само имя сервиса
-            target, _ = read_name(rdata, 0)
+            target, _ = read_name(data, rdata_at)
             if target:
                 names.add(target.lower())
         elif rtype == 33 and len(rdata) >= 6:  # SRV: цель экземпляра
-            target, _ = read_name(rdata, 6)
+            target, _ = read_name(data, rdata_at + 6)
             if target:
                 names.add(target.lower())
     return names, qd, an, ns, ar
@@ -270,11 +280,11 @@ def query_service(name: str, wait: float = 4.0, attempts: int = 3) -> list:
             for _ in range(an + ns + ar):
                 if offset >= len(data):
                     break
-                rrname, rrtype, rrclass, ttl, rdata, offset = parse_record(data, offset)
+                rrname, rrtype, rrclass, ttl, rdata, rdata_at, offset = parse_record(data, offset)
                 if rrclass & 0x8000:       # cache-flush bit — не игнорируем
                     rrclass &= 0x7FFF
                 if rrtype == 33 and not port:              # SRV
-                    port, target = parse_srv(rdata, data)
+                    port, target = parse_srv(rdata, data, rdata_at)
                 elif rrtype == 16:                         # TXT
                     txt.update(parse_txt(rdata))
             if port:
@@ -416,6 +426,20 @@ def scan_ports(ip: str, timeout: float = 0.5, workers: int = 400) -> list:
 # ------------------------------------------------------------- main
 
 
+def port_diff(now, ever) -> tuple:
+    """Что появилось впервые и что пропало относительно всего виденного.
+
+    Отдельная функция ради теста, и вот почему. Первая версия сравнивала
+    текущий скан с прошлым снимком и при пропаже порта вычитала его из снимка.
+    Телефон при этом мигает службой отладки: connect-порт 40217 закрылся и
+    вернулся — и был объявлен «новым портом пары», после чего скрипт пошёл
+    парить не тот порт и получил `protocol fault`. Сравнивать нужно с
+    множеством всех когда-либо виденных портов.
+    """
+    now, ever = set(now), set(ever)
+    return sorted(now - ever), sorted(ever - now)
+
+
 def scan_and_pair(adb: str, ip: str, code: str, wait: int) -> int:
     """Порт пары ищем сканом по уже известному адресу телефона.
 
@@ -452,24 +476,35 @@ def scan_and_pair(adb: str, ip: str, code: str, wait: int) -> int:
     fresh = []
     if deadline:
         log("ждём появления нового порта — окно с кодом на телефоне")
+        # Сравнивать надо с множеством ВСЕХ когда-либо виденных портов, а не с
+        # текущим снимком. Первая версия вычитала пропавшие порты из снимка, и
+        # когда connect-порт 40217 мигнул — закрылся и вернулся, — скрипт
+        # объявил его «новым портом пары» и ушёл парить не тот порт. Служба на
+        # телефоне действительно мигает, так что это не редкость, а норма.
+        #
+        # Интервал поднят с 5 до 8 секунд: полный скан — это 64512 попыток
+        # соединения за проход, и каждые 5 секунд такое давление само по себе
+        # может дёргать adbd на телефоне.
+        ever = set(baseline)
         tick = 0
         while time.time() < deadline and not fresh:
-            time.sleep(5)
+            time.sleep(8)
             tick += 1
             now = scan_ports(ip, timeout=0.4)
-            fresh = [p for p in now if p not in baseline]
-            gone = [p for p in baseline if p not in now]
-            if tick % 3 == 0 or fresh:
+            fresh, disappeared = port_diff(now, ever)
+            ever |= set(now)
+            if tick % 3 == 0 or fresh or disappeared:
                 state = "открыто: " + (", ".join(str(p) for p in now) or "ничего")
-                print(f"  [{tick * 5} с] {state}", flush=True)
-            if gone:
-                print(f"  закрылись: {', '.join(str(p) for p in gone)}")
-                baseline = [p for p in baseline if p not in gone]
+                print(f"  [{tick * 8} с] {state}", flush=True)
+            if disappeared:
+                print("  мигнули и ушли: "
+                      + ", ".join(str(p) for p in disappeared))
         if not fresh:
             print("  новый порт не появился — экран пары за время не открыли "
                   "либо молчит не только mDNS, но и весь сетевой стек телефона")
             return 4
         print("  НОВЫЙ ПОРТ: " + ", ".join(str(p) for p in fresh))
+        baseline = sorted(ever - set(fresh))
     else:
         fresh = []
 

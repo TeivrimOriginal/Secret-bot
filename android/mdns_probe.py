@@ -114,12 +114,13 @@ def main():
                 break
             rtype, rclass, ttl, rdlen = struct.unpack("!HHIH", data[offset:offset + 10])
             offset += 10
+            rdata_at = offset          # абсолютное начало rdata
             rdata = data[offset:offset + rdlen]
             offset += rdlen
             types.append(f"{rr}={rtype}")
             if rtype == 33 and rdlen >= 6:
                 port = struct.unpack("!H", rdata[4:6])[0]
-                target, _ = read_name(rdata, 6)
+                target, _ = read_name(data, rdata_at + 6)
             elif rtype == 16:
                 i = 0
                 while i < len(rdata):
