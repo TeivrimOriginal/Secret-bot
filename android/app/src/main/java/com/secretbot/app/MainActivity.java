@@ -4,6 +4,7 @@ import android.annotation.SuppressLint;
 import android.app.Activity;
 import android.content.Intent;
 import android.content.SharedPreferences;
+import android.content.pm.ApplicationInfo;
 import android.net.Uri;
 import android.os.Bundle;
 import android.os.Environment;
@@ -65,6 +66,14 @@ public class MainActivity extends Activity {
         webView = findViewById(R.id.webview);
         configView = findViewById(R.id.config_view);
         urlInput = findViewById(R.id.url_input);
+
+        // Debug-сборка открывает devtools-сокет WebView. Без этого проверить
+        // приложение можно только по скриншоту глазами: страница внутри
+        // WebView недоступна, и результат вызова моста не прочитать.
+        // В release флаг не выставлен — сокет остаётся закрытым.
+        if ((getApplicationInfo().flags & ApplicationInfo.FLAG_DEBUGGABLE) != 0) {
+            WebView.setWebContentsDebuggingEnabled(true);
+        }
 
         WebSettings s = webView.getSettings();
         s.setJavaScriptEnabled(true);

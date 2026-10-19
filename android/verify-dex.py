@@ -31,6 +31,9 @@ REQUIRED = [
     "estimatedBytes",        # подсчёт размера
     "MAX_BYTES",             # лимит
     "AndroidFile",           # имя моста для JS
+    # Devtools WebView: без него страница внутри WebView недоступна проверке —
+    # остаётся только скриншот. Debug-сборка обязана его включать.
+    "setWebContentsDebuggingEnabled",
 ]
 
 
