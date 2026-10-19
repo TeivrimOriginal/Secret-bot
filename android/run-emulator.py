@@ -364,6 +364,20 @@ def main() -> int:
     rc, out, _ = adb("install", "-r", APK)
     ok("apk установлен", rc == 0 and "Success" in out, out.strip()[-300:])
 
+    step("Система: кому открывать внешние ссылки")
+    # Приложение уводит чужой хост системным интентом ACTION_VIEW. Если в
+    # системе нет ни одного обработчика, startActivity бросит
+    # ActivityNotFoundException — то есть проверка «чужой хост перехвачен»
+    # упадёт на живом устройстве, а без этого замера причина была бы не видна.
+    rc, resolve, _ = adb("shell", "cmd", "package", "resolve-activity",
+                         "-a", "android.intent.action.VIEW",
+                         "-d", "http://e2e-foreign-host.invalid/leak")
+    summary = " ".join(resolve.split())
+    print("  " + summary[:200])
+    ok("в системе есть обработчик внешних ссылок",
+       "packageName" in summary or "Resolving activity" in summary,
+       summary[-200:])
+
     step("Локальный сайт для страницы")
     site = Site()
     site.start()
