@@ -4,7 +4,9 @@
          androidx-виджета, а Theme.AppCompat требует AppCompatActivity.
          Плюс сборка тянет на одну зависимость меньше. -->
     <style name="Theme.SecretBot" parent="android:Theme.Material.Light.NoActionBar">
-        <item name="colorPrimary">@color/blue</item>
+        <!-- Атрибут с префиксом android:, иначе он ищется в androidx.appcompat,
+             которого здесь нет: сборка падает на этапе link resources. -->
+        <item name="android:colorPrimary">@color/blue</item>
         <item name="android:statusBarColor">@color/blue</item>
         <item name="android:windowBackground">@color/blue</item>
     </style>

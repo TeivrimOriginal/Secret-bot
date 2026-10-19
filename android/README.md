@@ -18,7 +18,8 @@ android/
 ├── app/src/main/res/…                                     разметка, тема, иконки
 ├── make-icons.py                                          рисует mipmap-* из build/make-icon.py
 ├── check-java.py                                          разбор Java без Android SDK
-└── gradle/wrapper/gradle-wrapper.properties               версия Gradle 8.7
+├── gradlew, gradlew.bat, gradle/wrapper/gradle-wrapper.jar  gradle wrapper 8.7
+└── local.properties                                       sdk.dir, в git не вносится
 ```
 
 ## Три вещи, без которых обёртка не работает
@@ -37,20 +38,26 @@ android/
 
 ## Сборка
 
-Нужен Android SDK (compileSdk 34) и Gradle 8.7+ с AGP 8.5.2.
+Нужны JDK 17+ и Android SDK (compileSdk 34). Один раз поставить SDK:
 
 ```bash
-# иконки запуска обязательны: манифест ссылается на @mipmap/ic_launcher
-python android/make-icons.py
+# cmdline-tools с dl.google.com, дальше sdkmanager из cmdline-tools/latest/bin
+sdkmanager --sdk_root="$ANDROID_SDK_ROOT" --licenses      # принять все
+sdkmanager --sdk_root="$ANDROID_SDK_ROOT" "platform-tools" "platforms;android-34" "build-tools;34.0.0"
+echo "sdk.dir=$ANDROID_SDK_ROOT" > local.properties
 
-# Android Studio: открыть каталог android/ и собрать
-# или вручную, если Gradle уже установлен:
-gradle assembleDebug        # app/build/outputs/apk/debug/app-debug.apk
+# иконки запуска обязательны: манифест ссылается на @mipmap/ic_launcher
+python make-icons.py
+
+./gradlew :app:assembleDebug        # app/build/outputs/apk/debug/app-debug.apk
 ```
 
-**Осторожно:** в репозитории нет `gradle-wrapper.jar` и скриптов `gradlew` —
-они весят около 60 КБ и тянутся из сети при первой сборке. Пока их нет,
-используйте локальный Gradle или Android Studio (он добавит wrapper сам).
+Если `services.gradle.org` недоступен (закрытая сеть), поменяйте
+`distributionUrl` в `gradle/wrapper/gradle-wrapper.properties` на зеркало:
+`https://mirrors.cloud.tencent.com/gradle/gradle-8.7-bin.zip` или
+`https://repo.huaweicloud.com/gradle/gradle-8.7-bin.zip`. На этой машине
+`services.gradle.org` не открывается, и сборка делалась Gradle 8.7 с зеркала —
+отсюда и подсказка.
 
 ## Что проверено, а что нет
 

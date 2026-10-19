@@ -12,3 +12,13 @@ __pycache__/
 *.db-wal
 *.db-shm
 secret-bot.env
+
+# Android: локальные пути и результаты сборки
+android/local.properties
+android/.gradle/
+android/build/
+android/app/build/
+android/captures/
+*.apk
+*.aab
+*.keystore
