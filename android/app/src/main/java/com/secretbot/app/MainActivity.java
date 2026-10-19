@@ -197,6 +197,13 @@ public class MainActivity extends Activity {
         public boolean saveBase64(String base64, String fileName) {
             final String target;
             try {
+                // Проверки и безопасное имя — в BridgeLogic, они покрыты
+                // android/test-bridge.py. Здесь только запись на диск.
+                String tooBig = BridgeLogic.checkPayload(base64);
+                if (tooBig != null) {
+                    notify("❌ " + tooBig);
+                    return false;
+                }
                 byte[] data = Base64.decode(base64, Base64.DEFAULT);
                 File dir = getExternalFilesDir(Environment.DIRECTORY_DOWNLOADS);
                 if (dir == null) {
@@ -205,26 +212,22 @@ public class MainActivity extends Activity {
                 if (!dir.exists() && !dir.mkdirs()) {
                     throw new IOException("не удалось создать каталог " + dir);
                 }
-                File out = new File(dir, safeName(fileName));
+                File out = new File(dir, BridgeLogic.safeName(fileName));
                 try (FileOutputStream os = new FileOutputStream(out)) {
                     os.write(data);
                 }
                 target = out.getAbsolutePath();
+            } catch (OutOfMemoryError exc) {
+                // Строка от страницы оказалась слишком большой для кучи. Ловим
+                // отдельно от Exception: это Error, обычный catch мимо.
+                notify("❌ Файл слишком большой, памяти не хватило");
+                return false;
             } catch (Exception exc) {
                 notify("❌ Не удалось сохранить файл: " + exc.getMessage());
                 return false;
             }
             notify("✅ Сохранено: " + target);
             return true;
-        }
-
-        private String safeName(String name) {
-            String clean = name == null ? "" : name.trim();
-            clean = clean.replaceAll("[\\\\/:*?\"<>|]", "_");
-            if (clean.isEmpty()) {
-                clean = "file";
-            }
-            return clean.length() > 120 ? clean.substring(0, 120) : clean;
         }
 
         private void notify(final String text) {
