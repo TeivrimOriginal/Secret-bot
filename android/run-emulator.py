@@ -115,7 +115,9 @@ if os.name == "nt" and not os.path.isfile(ADB):
     ADB = shutil.which("adb") or ADB
 
 
-def adb(*args, timeout=180, stdin=None):
+def adb(*args, serial: str = "", timeout=180, stdin=None):
+    if serial:
+        args = ["-s", serial] + list(args)
     return run([ADB, *args], timeout=timeout, stdin=stdin)
 
 
@@ -232,12 +234,19 @@ class Site:
 # ------------------------------------------------------------- устройство
 
 
-def wait_boot(timeout: int) -> bool:
+def wait_boot(timeout: int, serial: str = "") -> bool:
     deadline = time.time() + timeout
     while time.time() < deadline:
-        rc, out, _ = adb("shell", "getprop", "sys.boot_completed")
-        if rc == 0 and out.strip().startswith("1"):
-            return True
+        args = ["shell", "getprop", "sys.boot_completed"]
+        if serial:
+            args = ["-s", serial] + args
+        rc, out, _ = adb(*args)
+        if rc == 0:
+            # Вывод getprop на Android может содержать \r, \n, лидирующий
+            # мусор от stderr предыдущей команды и прочее. Берём первую цифру.
+            digit = out.lstrip()[:1]
+            if digit == "1":
+                return True
         time.sleep(3)
     return False
 
@@ -353,15 +362,18 @@ def main() -> int:
         print(f"  запущен headless, лог: {log_path}")
 
     print("  ждём загрузки …")
-    if not wait_boot(args.boot_timeout):
+    serial = connected[0] if connected else ""
+    if not wait_boot(args.boot_timeout, serial):
         ok("эмулятор загрузился", False, f"за {args.boot_timeout} с")
+        if started_here and not args.keep:
+            adb("emu", "kill")
         return 1
     ok("эмулятор загрузился", True)
     rc, build, _ = adb("shell", "getprop", "ro.build.version.sdk")
     print(f"  API {build.strip()}")
 
     step("Установка apk")
-    rc, out, _ = adb("install", "-r", APK)
+    rc, out, _ = adb("install", "-r", APK, serial=serial)
     ok("apk установлен", rc == 0 and "Success" in out, out.strip()[-300:])
 
     step("Система: кому открывать внешние ссылки")
