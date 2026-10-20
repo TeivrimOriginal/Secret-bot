@@ -97,12 +97,33 @@ Render Free действительно бесплатен, но:
 
 ### Шаг 3. Создать сервис
 
+Можно руками через веб-интерфейс, а можно скриптом — `scripts/deploy_northflank.py`
+создаёт сервис, том, переменные и healthcheck сам:
+
+```bash
+set NF_API_TOKEN=<токен из настроек Northflank>
+set BOT_TOKEN=123456:AA...
+python scripts/deploy_northflank.py
+```
+
+Скрипт напечатает адрес сервиса. Тогда запустите его ещё раз с этим
+адресом, чтобы `BASE_URL` стал правильным:
+
+```bash
+python scripts/deploy_northflank.py --base-url https://<адрес-сервиса>
+```
+
+**Почему `BASE_URL` надо задавать вторым проходом:** адрес Northflank
+издаёт только после первого деплоя, а `BASE_URL` нужен во время сборки.
+Без правильного `BASE_URL` passkey не заработает: `rpId` берётся из
+имени хоста, и браузер отклонит подпись.
+
+Если делать руками:
+
 1. **Add service → Deployment service** (не Job: Job выполняется один раз).
 2. **Source**: Git repository → `TeivrimOriginal/Secret-bot`, ветка `main`.
    (Репозиторий публичный, так что приватный доступ не нужен.)
 3. **Build**: Dockerfile. Путь — `Dockerfile` в корне репозитория.
-   (Файл `secret-bot/Dockerfile` нужно скопировать в корень репозитория —
-   см. «Что нужно закоммитить» ниже.)
 4. **Runtime**:
    * **Instance type**: `nf-compute-200` (2 vCPU, 4 ГБ RAM) — самый маленький,
      который тянет Python + aiogram; `nf-compute-100` тоже подойдёт.
@@ -221,34 +242,23 @@ that use standard GitHub-hosted runners»).
 
 ---
 
-## Что нужно закоммитить в репозиторий
+## Что закоммичено в репозиторий
 
-Northflank собирает из **корня** репозитория, а код лежит в подпапке
-`secret-bot/`. Нужно:
+Репозиторий `TeivrimOriginal/Secret-bot` — **публичный**, и в его корне
+уже лежат всё, что нужно для сборки:
 
-```bash
-cd secret-bot
-cp Dockerfile ../Dockerfile.secretbot   # или перенести Dockerfile в корень
+```
+Dockerfile          образ для деплоя
+.dockerignore       что не должно попасть в образ
+fsm_storage.py      состояния бота в SQLite
+DEPLOY.md           этот файл
 ```
 
-Проще: сделать в корне репозитория `Dockerfile`, который копирует код из
-`secret-bot/`:
+Northflank собирает прямо из репозитория: Source → Git repository →
+`TeivrimOriginal/Secret-bot`, ветка `main`, build → Dockerfile.
 
-```dockerfile
-FROM python:3.12-slim-bookworm
-WORKDIR /app
-COPY secret-bot/requirements.txt ./
-RUN pip install --no-cache-dir -r requirements.txt
-COPY secret-bot/*.py ./
-COPY secret-bot/static ./static
-ENV DB_PATH=/data/links.db ENABLE_WEB=1 WEB_HOST=0.0.0.0
-RUN mkdir -p /data && chmod 777 /data
-EXPOSE 8080
-CMD ["python", "-u", "launcher.py"]
-```
-
-То же самое делает `render.yaml` / `northflank.yaml`, если решено
-использовать декларативный конфиг вместо веб-интерфейса.
+Секрезы (токен бота) в репозитории не лежат и не должны: они задаются
+переменными окружения в консоли хостинга.
 
 ---
 
@@ -259,11 +269,15 @@ cd secret-bot
 python -m venv .venv
 .venv/Scripts/python -m pip install -r requirements.txt
 .venv/Scripts/python launcher.py --selftest    # 14 проверок, exit 0
-.venv/Scripts/python -m pytest tests -q        # тесты хранилища состояний
+.venv/Scripts/python -m pytest tests -q        # 27 проверок
+.venv/Scripts/python scripts/verify_dockerfile.py   # 32 проверки
+.venv/Scripts/python tests/test_bot_e2e.py    # 19 проверок, сквозной путь
 ```
 
 `--selftest` проверяет всё, что можно проверить без Telegram: шифрование,
-базу, сайт, 404, PWA. Если он зелёный, код рабочий.
+базу, сайт, 404, PWA. Сквозной тест (`test_bot_e2e.py`) проверяет весь
+путь пользователя против фейкового Telegram API: документ → шифрование →
+ссылка → страница → файл, а также что состояние переживает перезапуск.
 
 ---
 
