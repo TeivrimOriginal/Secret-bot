@@ -1,6 +1,21 @@
+# Зависимости бота и сайта.
+#
+# Версии снизу ограничены только снизу: сверху новые релизы не должны
+# ломать проверенный код, а снизу нужны возможности, которых в старых
+# версиях нет (например, `aiogram` 3.20 — из-за него в README упомянут
+# `StarletteDeprecationWarning` про httpx2).
+
 aiogram>=3.20
 fastapi>=0.110
 uvicorn>=0.29
 cbor2>=5.6
 cryptography>=42
 python-multipart>=0.0.9
+
+# Тесты (не нужны в проде, но без них `test-passkey.py` и pytest
+# не запустятся). Starlette 1.7 требует httpx2 для TestClient;
+# httpx нужен живому сайту в `test-passkey.py`.
+httpx>=0.27
+httpx2>=0.1
+pytest>=8.0
+pytest-asyncio>=0.24

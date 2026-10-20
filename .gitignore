@@ -6,6 +6,14 @@ build/*.7z
 __pycache__/
 *.pyc
 
+# Локальные окружения и кэши инструментов
+.venv/
+venv/
+env/
+.pytest_cache/
+.ruff_cache/
+.mypy_cache/
+
 # Данные времени выполнения
 *.db
 *.db-journal

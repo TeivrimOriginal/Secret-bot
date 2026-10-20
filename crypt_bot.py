@@ -53,11 +53,6 @@ import os
 from aiogram import Bot, Dispatcher
 from aiogram.client.default import DefaultBotProperties
 from aiogram.enums import ParseMode
-# Для продакшена замените MemoryStorage на RedisStorage:
-#   from aiogram.fsm.storage.redis import RedisStorage
-#   storage = RedisStorage.from_url("redis://localhost:6379/0")
-# MemoryStorage теряет состояния (и файлы в них) при перезапуске бота.
-from aiogram.fsm.storage.memory import MemoryStorage
 
 import database
 from config import (
@@ -98,6 +93,7 @@ from database import (  # noqa: F401 — переэкспорт для внеш�
     _vault_password,
     _vault_put,
 )
+from fsm_storage import SQLiteStorage
 from groups import events_router, group_router
 from passkey import (
     b64u,
@@ -196,7 +192,7 @@ async def main() -> None:
         token=BOT_TOKEN,
         default=DefaultBotProperties(parse_mode=ParseMode.HTML),
     )
-    dp = Dispatcher(storage=MemoryStorage())
+    dp = Dispatcher(storage=SQLiteStorage())
     dp.include_router(private_router)
     dp.include_router(group_router)
     dp.include_router(events_router)
