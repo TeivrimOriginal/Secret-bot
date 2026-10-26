@@ -70,16 +70,31 @@ with _db_lock:
         "CREATE TABLE IF NOT EXISTS settings ("
         "key TEXT PRIMARY KEY, value TEXT NOT NULL)"
     )
+    # Кто создал ссылку (для мини-аппа) и кто вообще пользовался ботом
+    # (для /api/app/notify: бот может написать только тем, кто его запускал).
+    _db.execute(
+        "CREATE TABLE IF NOT EXISTS users ("
+        "user_id INTEGER PRIMARY KEY, chat_id INTEGER NOT NULL, "
+        "username TEXT, first_name TEXT, last_seen REAL NOT NULL)"
+    )
+    # Миграция старых баз: у ссылок появился владелец. ALTER TABLE без
+    # IF NOT EXISTS, поэтому ловим «уже есть».
+    try:
+        _db.execute("ALTER TABLE links ADD COLUMN user_id INTEGER")
+    except sqlite3.OperationalError:
+        pass
+    _db.execute("CREATE INDEX IF NOT EXISTS links_by_user ON links(user_id)")
     _db.commit()
 
 
 # --------------------------- Ссылки на файлы ---------------------------------
 
-def _db_add(token: str, file_id: str, file_name: str) -> None:
+def _db_add(token: str, file_id: str, file_name: str, user_id: int | None = None) -> None:
     with _db_lock:
         _db.execute(
-            "INSERT INTO links (token, file_id, file_name, created) VALUES (?, ?, ?, ?)",
-            (token, file_id, file_name, time.time()),
+            "INSERT INTO links (token, file_id, file_name, created, user_id) "
+            "VALUES (?, ?, ?, ?, ?)",
+            (token, file_id, file_name, time.time(), user_id),
         )
         _db.commit()
 
@@ -92,9 +107,14 @@ def _db_get(token: str) -> tuple[str, str] | None:
     return (row[0], row[1]) if row else None
 
 
-async def add_link(token: str, file_id: str, file_name: str) -> None:
-    """Запоминает ссылку: token -> file_id зашифрованного файла в Telegram."""
-    await asyncio.to_thread(_db_add, token, file_id, file_name)
+async def add_link(token: str, file_id: str, file_name: str,
+                   user_id: int | None = None) -> None:
+    """Запоминает ссылку: token -> file_id зашифрованного файла в Telegram.
+
+    user_id — кто создал ссылку: без него страница /d/<token> работает как
+    обычно, но ссылка не видна владельцу в мини-аппе.
+    """
+    await asyncio.to_thread(_db_add, token, file_id, file_name, user_id)
 
 
 # Имя, которое зовёт groups.py: одинаковый глагол в императиве читается
@@ -105,6 +125,76 @@ db_add_link = add_link
 async def get_link(token: str) -> tuple[str, str] | None:
     """Возвращает (file_id, file_name) или None, если ссылки нет."""
     return await asyncio.to_thread(_db_get, token)
+
+
+def _db_user_links(user_id: int) -> list[dict[str, Any]]:
+    """Ссылки, созданные этим пользователем, новые сверху."""
+    with _db_lock:
+        rows = _db.execute(
+            "SELECT token, file_name, created FROM links WHERE user_id = ? "
+            "ORDER BY created DESC LIMIT 100",
+            (user_id,),
+        ).fetchall()
+    return [{"token": r[0], "file_name": r[1], "created": r[2]} for r in rows]
+
+
+def _db_link_revoke(token: str, user_id: int) -> bool:
+    """Удаляет ссылку, если она принадлежит именно этому пользователю."""
+    with _db_lock:
+        cur = _db.execute(
+            "DELETE FROM links WHERE token = ? AND user_id = ?", (token, user_id)
+        )
+        _db.commit()
+    return cur.rowcount > 0
+
+
+async def user_links(user_id: int) -> list[dict[str, Any]]:
+    """Список ссылок пользователя — для мини-аппа."""
+    return await asyncio.to_thread(_db_user_links, user_id)
+
+
+async def link_revoke(token: str, user_id: int) -> bool:
+    """Удаляет ссылку пользователя. False — чужая ссылка или её нет."""
+    return await asyncio.to_thread(_db_link_revoke, token, user_id)
+
+
+# ---------------------------- Пользователи -----------------------------------
+# Кто запускал бота: chat_id нужен, чтобы бот мог написать человеку по
+# команде из мини-аппа (уведомление или инструкция).
+
+def _user_upsert(user_id: int, chat_id: int, username: str | None,
+                 first_name: str | None) -> None:
+    with _db_lock:
+        _db.execute(
+            "INSERT INTO users (user_id, chat_id, username, first_name, last_seen) "
+            "VALUES (?, ?, ?, ?, ?) "
+            "ON CONFLICT(user_id) DO UPDATE SET chat_id = excluded.chat_id, "
+            "username = excluded.username, first_name = excluded.first_name, "
+            "last_seen = excluded.last_seen",
+            (user_id, chat_id, username, first_name, time.time()),
+        )
+        _db.commit()
+
+
+def _user_get(user_id: int) -> tuple[int, str | None, str | None] | None:
+    """(chat_id, username, first_name) или None — бот с человеком не общался."""
+    with _db_lock:
+        row = _db.execute(
+            "SELECT chat_id, username, first_name FROM users WHERE user_id = ?",
+            (user_id,),
+        ).fetchone()
+    return (row[0], row[1], row[2]) if row else None
+
+
+async def user_upsert(user_id: int, chat_id: int, username: str | None,
+                      first_name: str | None) -> None:
+    """Запоминает (или обновляет) пользователя бота."""
+    await asyncio.to_thread(_user_upsert, user_id, chat_id, username, first_name)
+
+
+async def user_get(user_id: int) -> tuple[int, str | None, str | None] | None:
+    """chat_id и имя пользователя; None — если бота ещё не запускали."""
+    return await asyncio.to_thread(_user_get, user_id)
 
 
 # ------------------------------- Группы --------------------------------------

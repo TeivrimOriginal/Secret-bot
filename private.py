@@ -30,6 +30,7 @@ from cryptography.exceptions import InvalidTag
 
 import crypto
 import database
+from database import user_upsert
 from config import (
     BASE_URL,
     ENC_SUFFIX,
@@ -219,6 +220,15 @@ async def on_document(message: Message, state: FSMContext, bot: Bot) -> None:
     if doc.file_size and doc.file_size > MAX_DOWNLOAD_SIZE:
         await message.answer("❌ Файл слишком большой: бот может скачать не более 20 МБ.")
         return
+
+    # Запомним пользователя, чтобы бот мог потом написать ему из мини-аппа.
+    if message.from_user:
+        await database.user_upsert(
+            message.from_user.id,
+            message.chat.id,
+            message.from_user.username,
+            message.from_user.full_name,
+        )
 
     try:
         buffer = io.BytesIO()

@@ -39,6 +39,7 @@ from fastapi import FastAPI, Request, Response
 from fastapi.responses import HTMLResponse, JSONResponse, PlainTextResponse
 
 import config
+from miniapp_api import router as miniapp_router
 import crypto
 import database
 import passkey
@@ -678,6 +679,7 @@ def create_app(bot: Bot) -> FastAPI:
     app = FastAPI(
         title="Secret-bot",
         docs_url=None, redoc_url=None, openapi_url=None,  # документации API не нужно
+        # CORS будет добавлен вручную ниже
     )
     app.state.bot = bot
     app.add_api_route("/", web_index, methods=["GET"], response_class=HTMLResponse)

@@ -27,6 +27,25 @@ WEB_HOST = os.getenv("WEB_HOST", "0.0.0.0")
 WEB_PORT = int(os.getenv("WEB_PORT") or os.getenv("PORT") or "8080")
 DB_PATH = os.getenv("DB_PATH", "links.db")
 
+# --------------------------- Telegram Mini App -------------------------------
+# Мини-апп — статическая страница на GitHub Pages; сюда его адрес и откуда
+# пускать запросы. MINIAPP_URL пуст — бот просто не ставит кнопку приложения.
+MINIAPP_URL = os.getenv(
+    "MINIAPP_URL", "https://teivrimoriginal.github.io/Secret-bot/"
+).rstrip("/")
+# Origins, которым сайт разрешает CORS-запросы к /api/app/* (через запятую).
+# По умолчанию — origin самого мини-аппа и локальная разработка.
+MINIAPP_ALLOW_ORIGINS = [
+    o.strip().rstrip("/")
+    for o in os.getenv(
+        "MINIAPP_ALLOW_ORIGINS",
+        f"{MINIAPP_URL},http://localhost:8080,http://127.0.0.1:8080",
+    ).split(",")
+    if o.strip()
+]
+# Свежесть initData: старше этого срока запрос мини-аппа отвергается.
+MINIAPP_AUTH_TTL = int(os.getenv("MINIAPP_AUTH_TTL", "86400"))
+
 # --------------------------- Passkey (WebAuthn) ------------------------------
 # Вход на страницу по отпечатку пальца / Face ID вместо кодового слова.
 # Порядок такой: человек один раз вводит кодовое слово -> может создать

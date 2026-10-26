@@ -8,7 +8,13 @@ from aiogram.types import BufferedInputFile, ChatMemberUpdated, Message
 
 from config import BASE_URL, GROUP_MAX_SIZE, ENC_SUFFIX
 from crypto import is_encrypted, encrypt_file
-from database import group_upsert, group_remove, codeword_get, db_add_link
+from database import (
+    group_upsert,
+    group_remove,
+    codeword_get,
+    db_add_link,
+    user_upsert,
+)
 
 logger = logging.getLogger("crypt_bot")
 group_router = Router()
@@ -92,7 +98,9 @@ async def on_group_document(message: Message, bot: Bot) -> None:
                 "Откройте ссылку и введите кодовое слово группы для скачивания."
             ),
         )
-        await db_add_link(token, sent.document.file_id, file_name)
+        # Запомним пользователя, чтобы мог увидеть свои ссылки в мини‑аппе.
+        await database.user_upsert(user.id, message.chat.id, user.username, user.full_name)
+        await db_add_link(token, sent.document.file_id, file_name, user.id)
     except Exception:
         logger.exception("Ошибка шифрования файла в группе")
         await message.answer("❌ Ошибка обработки файла.")
