@@ -1,0 +1,15 @@
+services:
+  - type: web
+    name: secret-bot
+    env: docker
+    plan: free
+    region: oregon
+    dockerfilePath: Dockerfile
+    autoDeploy: true
+    envVars:
+      - key: BOT_TOKEN
+        value: ${BOT_TOKEN}
+      - key: BASE_URL
+        value: ${BASE_URL}
+      - key: ENABLE_WEB
+        value: "1"

@@ -293,6 +293,39 @@ PWA — манифест, service worker и иконки (`/manifest.webmanifest
 
 ## Публичный URL
 
+### Деплой на Render.com (Render.yaml)
+
+Для быстрого и бесплатного хостинга можно использовать **Render.com**.  Файл `render.yaml` уже добавлен в корень репозитория и описывает сервис:
+
+```yaml
+services:
+  - type: web
+    name: secret-bot
+    env: docker
+    plan: free
+    region: oregon
+    dockerfilePath: Dockerfile
+    autoDeploy: true
+    envVars:
+      - key: BOT_TOKEN
+        value: ${BOT_TOKEN}
+      - key: BASE_URL
+        value: ${BASE_URL}
+      - key: ENABLE_WEB
+        value: "1"
+```
+
+1. Зарегистрируйтесь/войдите в Render.com.
+2. На странице **New → Web Service** выберите **Connect a repository** и укажите этот репозиторий.
+3. Render автоматически обнаружит `render.yaml`, создаст сервис и запустит сборку Docker‑образа.
+4. После успешного деплоя в переменных окружения сервиса задайте `BOT_TOKEN` (токен от BotFather) и `BASE_URL` – публичный URL, который будет использоваться сайтом (например, `https://secret-bot.onrender.com`).
+5. Сервис будет работать 24/7, а GitHub Actions будет автоматически пушить новые версии Docker‑образа в GitHub Container Registry.
+
+---
+
+*Обратите внимание*: При первом запуске без `BASE_URL` бот будет работать только в режиме без сайта. Чтобы включить веб‑интерфейс, установите `ENABLE_WEB=1` и укажите корректный `BASE_URL`.
+
+
 Бот работает на **long polling** — ему публичный адрес не нужен, он сам
 дёргает Telegram. Публичный адрес нужен только **сайту** (странице расшифровки),
 и для passkey он обязан быть по HTTPS.
